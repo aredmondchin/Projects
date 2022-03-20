@@ -1,3 +1,5 @@
+-- The following code displays a few basic queries to analyze the operations of a fictional Domino's storefront. 
+
 create schema PizzaTime;
 use PizzaTime;
 
