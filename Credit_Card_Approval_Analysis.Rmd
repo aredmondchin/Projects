@@ -1,0 +1,225 @@
+---
+title: 'Economics 2590 Fall 2021 Final Project'
+author: "Blenda Hoang, Alexander Chin, Daniel Lavarte"
+
+date: "11/15/21"
+output:
+  html_document: default
+  header-includes: \usepackage{color}
+fontsize: 12pt
+margin: 1in
+---
+<!--
+This part is a comment: it won't show in your output. You can use comments to remind you to change the name or the lab number, or a version number. You should use lots of them.  Some excellent economists say that about one quarter of your programs should be comments. Comments are most important in your blocks of code (the grey part of the RMarkdown document)
+-->
+```{r setup, echo=FALSE, message=F, warning=F}
+
+#==============================================================================
+#   This chunk will be used for every assignment
+#==============================================================================
+
+  # Clear the working space
+    rm(list = ls())
+
+#Set working directory
+setwd("~/SCUFall21/ECON2509Econometrics")
+#getwd()
+
+### Load the packages (all must have been installed)
+    library(doBy)
+    library(dplyr)
+    library(foreign)
+    library(ggplot2)
+    library(knitr)
+    library(lmtest)
+    library(readstata13)
+    library(sandwich)
+    library(stargazer)
+    library(AER)
+    library(gdata)
+    library(wooldridge)
+    library(openintro)
+    library(tidyr)
+    library(tidyverse)
+    library(stargazer)
+
+# Function below corrects for any heteroskedastic error
+    cse=function(reg) {
+    rob=sqrt(diag(vcovHC(reg, type="HC1")))
+    return(rob)
+    }
+    
+```
+## Abstract
+Many factors influence whether banks approve consumers for credit cards or not. Traditionally, income is one of the biggest considerations in the process. But how do banks judge consumers who are self employed and whose income is inevitably more volatile? We seek to answer this question by reviewing 13,444 credit card applications and their subsequent approval/denial. Through both linear and probit regression models, we find that self employed individuals are indeed less likely to be approved for a credit card than equal individuals who are employed alternatively... 
+
+## Introduction
+## Question and Associated Hypotheses 
+<br></br>
+Data Source: *https://www.kaggle.com/surekharamireddy/credit-data*<br></br>
+This data set covers 13,444 observations and the following 14 descriptive variables about retail credit card data. <br></br>
+
+1. **CARDHLDR**: 1 if application for credit card is accepted, 0 if not<br></br>
+2. **DEFAULT**:  1 if defaulted, 0 if not (observed when CARDHLDR=1, 10,499 observations)<br></br>
+3. **AGE**: Age in years plus twelfths of a year<br></br>
+4. **ACADMOS**: Months living at current address<br></br>
+5. **ADEPCNT**: 1 + number of dependents<br></br>
+6. **MAJORDRG**: Number of major derogatory reports<br></br>
+7. **MINORDRG**: Number of minor derogatory reports<br></br>
+8. **OWNRENT**: 1 if owns their home, 0 if rent<br></br>
+9. **INCOME**: Monthly income (divided by 10,000)<br></br>
+10. **SELFEMPL**: 1 if self employed, 0 if not<br></br>
+11. **INCPER**: Income divided by number of dependents<br></br>
+12. **EXP_INC**: Ratio of monthly credit card expenditure to yearly income<br></br>
+13. **SPENDING**: Average monthly credit card expenditure (for CARDHOLDER = 1)<br></br>
+14. **LOGSPEND**: Log of spending<br></br>
+
+<u>**Question of Interest**</u>: <br></br>
+
+-   Does being self-employed impact likelihood of credit card approval? 
+
+Null Hypothesis - Ho: B1 = 0  <br></br> 
+Alternative Hypothesis - Ha: B1 ≠ 0 <br></br>
+
+```{r Details, echo=FALSE, message=F, warning=FALSE, include=FALSE}
+### Data section: loading data
+
+#Load data set CSV file from folder
+
+credit_data=read.csv("credit_data.csv", header=T, sep=",")
+
+#data("credit_data") 
+str(credit_data) #summarizes the data
+credit_data=as.data.frame(credit_data) #converts data set to data frame 
+
+```
+## Descriptive Statistics
+```{r Descriptive Statistics, echo=FALSE, message=F, warning=FALSE, comment=""}
+
+# Create a table of descriptive statistics using stargazer command
+
+stargazer(credit_data[c("INCOME","SPENDING","AGE","CARDHLDR","DEFAULT","ADEPCNT")], type="text", digits=1, summary.stat=c("n", "mean", "median", "sd"), title="Descriptive Statistics", flip=FALSE,
+          covariate.labels=c("Monthly Income","Avg Monthly CC Expenditure","Age","Approved Cardholder","Payment Default","Number of Dependents"))
+
+```
+
+-   From the descriptive statistics, we can observe that the mean of the binary variable "Approved Cardholder" is 0.8 indicating that there was a larger proportion of people approved for a credit card than denied (10,499 approved applicants vs 2,945 denied applicants). We also observe high standard deviations across all variables indicating a larger spread of data points around the mean and significant variability in the data. 
+
+```{r Graphs, echo=FALSE, message=F, warning=FALSE, comment=""}
+
+credit_data<-rename(credit_data,Approved=CARDHLDR)
+
+select(credit_data, "Approved", "SELFEMPL") %>% pivot_longer(col=c("Approved", "SELFEMPL"), names_to="variable", values_to="value") %>% ggplot( aes(x=factor(value), fill=factor(variable))) + geom_bar()  +
+  scale_fill_manual(values=c("lightsteelblue3","midnightblue"))
+
+table = table(credit_data$Approved,credit_data$SELFEMPL)
+colnames(table) = c("Not Self-employed", "Self-employed") 
+rownames(table)= c("Not Approved","Approved")
+table
+prop.table(table,margin=2)
+
+#+ geom_text(aes(label=country),hjust=1, vjust=0, size=2.5) --> code to add labels
+
+```
+
+**Is there a relationship between being self-employed and the likelihood of being approved for a credit card?** <br></br>
+
+-   Based off our observations from the graph and table above, those who are self-employed have a higher proportion of rejected credit card applications than those who aren't. However, the difference between proportions isn't large enough to wholly attribute credit card application denial to employment status hence there are likely other factors that need to be considered. 
+
+## Binary Outcome Variable Regression Analysis
+```{r Binary Outcome Regressions, echo=FALSE, message=F, warning=FALSE, comment=""}
+
+credit_data$INCOME_THOUSANDS=(credit_data$INCOME/1000)
+credit_data$SELFEMPL_INTERACTION=(credit_data$SELFEMPL*credit_data$INCOME_THOUSANDS)
+
+#Linear Probability Models (LPMs)
+lpm1=lm(Approved~SELFEMPL, data=credit_data)
+lpm2=lm(Approved~SELFEMPL+I(INCOME/1000), data=credit_data)
+lpm3=lm(Approved~SELFEMPL+I(INCOME/1000)+OWNRENT, data=credit_data)
+lpm4=lm(Approved~SELFEMPL+I(INCOME/1000)+OWNRENT+MAJORDRG, data=credit_data)
+lpm5=lm(Approved~SELFEMPL+I(INCOME/1000)+OWNRENT+MAJORDRG+ADEPCNT, data=credit_data)
+lpm6=lm(Approved~SELFEMPL+I(INCOME/1000)+OWNRENT+MAJORDRG+ADEPCNT+AGE, data=credit_data)
+lpm7=lm(Approved~SELFEMPL+I(INCOME/1000)+OWNRENT+MAJORDRG+ADEPCNT+AGE+SELFEMPL_INTERACTION, data=credit_data)
+
+stargazer(lpm1, lpm2, lpm3, lpm4, lpm5, lpm6, lpm7, se=list(cse(lpm1), cse(lpm2), cse(lpm3), cse(lpm4), cse(lpm5), cse(lpm6), cse(lpm7)), 
+        title="Credit Card Approval Linear Probability Model Regressions", type="text", 
+        star.cutoffs=NA, df=FALSE, digits=3)
+
+lht(lpm7,c("SELFEMPL_INTERACTION=0","AGE=0"),white.adjust = "hc1")
+lht(lpm7,c("SELFEMPL_INTERACTION=0"),white.adjust = "hc1")
+```
+
+<u>**Linear Probability Model Regression Analysis** </u><br></br>
+
+-   Our baseline regression in the Linear Probability Model is Regression 6. While adding on the "Age" control variable in Regression 6 doesn't change our adjusted R-squared value from Regression 5, this variable is statistically significant at 95% levels (t=2.5). In Regression 7, we add on the interaction term between SELFEMPL and INCOME, however this does not change our R-squared value and is not statistically significant (t=1.625). Additionally, the F-test value for the interaction term in Regression 7 is 2.9 (which is below the F critical value of 3.84), hence we can conclude this term is not needed to retain in our baseline model. The F-test value for Age + the interaction term is greater than the F critical value of 3 which is further evidence supporting our baseline model choice. The result from our baseline regression is interpreted as if someone were self-employed, they would have -5.6% less chance of being approved for a credit card, all other factors equal. 
+
+-   However, the issue with the LPM model is the probabilities of being approved or denied can be <0 or >1 which is outside the normal boundaries of probability (0 <= p <=1). Given this nuance of the LPM model, we also run this regression using the Probit Model below in which this issue is resolved. 
+
+```{r R-Squared, echo=FALSE, message=F, warning=FALSE, comment=""}
+
+#Probit Regression Models (Ps)
+p1=glm(Approved~SELFEMPL, family=binomial(link="probit"), x=TRUE, data=credit_data)
+p2=glm(Approved~SELFEMPL+I(INCOME/1000), family=binomial(link="probit"), x=TRUE, data=credit_data)
+p3=glm(Approved~SELFEMPL+I(INCOME/1000)+OWNRENT, family=binomial(link="probit"), x=TRUE, data=credit_data)
+p4=glm(Approved~SELFEMPL+I(INCOME/1000)+OWNRENT+MAJORDRG, family=binomial(link="probit"), x=TRUE, data=credit_data)
+p5=glm(Approved~SELFEMPL+I(INCOME/1000)+OWNRENT+MAJORDRG+ADEPCNT, family=binomial(link="probit"), x=TRUE, data=credit_data)
+p6=glm(Approved~SELFEMPL+I(INCOME/1000)+OWNRENT+MAJORDRG+ADEPCNT+AGE, family=binomial(link="probit"), x=TRUE, data=credit_data)
+p7=glm(Approved~SELFEMPL+I(INCOME/1000)+OWNRENT+MAJORDRG+ADEPCNT+AGE+SELFEMPL_INTERACTION, family=binomial(link="probit"), x=TRUE, data=credit_data)
+
+stargazer(p1, p2, p3, p4, p5, p6, p7, se=list(NULL, NULL, NULL, NULL, NULL, NULL, NULL), 
+        title="Credit Card Approvals Probit Regressions", type="text", 
+        star.cutoffs=NA, df=FALSE, digits=3, keep.stat = c("n","ll", "lr"))
+
+p1pseudoR2=(p1$null.deviance-p1$deviance)/p1$null.deviance
+p2pseudoR2=(p2$null.deviance-p2$deviance)/p2$null.deviance
+p3pseudoR2=(p3$null.deviance-p3$deviance)/p3$null.deviance
+p4pseudoR2=(p4$null.deviance-p4$deviance)/p4$null.deviance
+p5pseudoR2=(p5$null.deviance-p5$deviance)/p5$null.deviance
+p6pseudoR2=(p6$null.deviance-p6$deviance)/p6$null.deviance
+p7pseudoR2=(p7$null.deviance-p7$deviance)/p7$null.deviance
+
+tab <- matrix(c(p1pseudoR2, p2pseudoR2, p3pseudoR2, p4pseudoR2, p5pseudoR2, p6pseudoR2, p7pseudoR2), ncol=1, byrow=TRUE)
+colnames(tab) <- c('Pseudo R-Squared')
+rownames(tab) <- c('Probit Regression 1','Probit Regression 2','Probit Regression 3','Probit Regression 4','Probit Regression 5','Probit Regression 6','Probit Regression 7')
+tab <- as.table(tab)
+tab
+
+```
+
+```{r Part D, echo=FALSE, message=F, warning=FALSE, comment=""}
+
+library(erer)
+fm1a=maBina(p1, x.mean=TRUE, rev.dum=TRUE, digits=3)
+fm2a=maBina(p2, x.mean=TRUE, rev.dum=TRUE, digits=3)
+fm3a=maBina(p3, x.mean=TRUE, rev.dum=TRUE, digits=3)
+fm4a=maBina(p4, x.mean=TRUE, rev.dum=TRUE, digits=3)
+fm5a=maBina(p5, x.mean=TRUE, rev.dum=TRUE, digits=3)
+fm6a=maBina(p6, x.mean=TRUE, rev.dum=TRUE, digits=3)
+fm7a=maBina(p7, x.mean=TRUE, rev.dum=TRUE, digits=3)
+
+stargazer(fm1a, fm2a, fm3a, fm4a, fm5a, fm6a, fm7a, se=list(NULL, NULL, NULL,NULL,NULL,NULL,NULL), 
+        title="Probit Regressions - Average Marginal Effects", type="text", 
+        star.cutoffs=NA, df=FALSE, digits=3, keep.stat = c("n","ll"))
+ 
+```
+
+<u>**Probit Model Regression Analysis** </u><br></br>
+
+-   In our Probit model, we observe Regression 7 to be our baseline model. This model has the highest pseudo R-squared value, explaining 23.18% of the variance in credit card approval. However, the SELFEMPL variable in Regression 7 is no longer statistically significant as compared to Regression 6 while the interaction between SELFEMPL and INCOME is statistically significant. Note this is the opposite effect from the Linear Probability Model. The result from our baseline regression is interpreted as if someone were self-employed, they would have -1% + (-4 * monthly income in thousands)% chance of being approved for a credit card (holding all else constant). 
+
+<u>**Omitted Variable Bias** </u><br></br>
+
+-   Once we include the interaction term between self-employment and income, we observe that SELFEMPL and INCOME term in Regression 6 suffers from omitted variable downward bias. There are marginal changes to the coefficients of the other regressors. 
+
+## Conclusion 
+
+<u>**Internal and External Validity** </u><br></br>
+
+<u>*Internal validity considerations*:</u><br></br>
+1) Reverse causality - this consideration is unlikely to occur in our data given credit card approval generally does not influence employment status. <br></br>
+2) Omitted Variable Bias - since our model stabilizes in Regression 4 after we add on additional control variables (i.e. income, own/rent, and major derogatory reports) to our variable of interest, self-employed, it is unlikely our baseline model (Regression 7) suffers from omitted variable bias.
+
+<u>*External validity considerations*:</u><br></br>
+1) Geographic location - our analysis may or may not be applicable in other locations depending on the local economy of the region and whether self-employed, small business owners generate higher or lower revenue in certain localities. <br></br>
+
+
